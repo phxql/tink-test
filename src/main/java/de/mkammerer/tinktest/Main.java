@@ -1,23 +1,11 @@
 package de.mkammerer.tinktest;
 
-import com.google.crypto.tink.Aead;
-import com.google.crypto.tink.CleartextKeysetHandle;
-import com.google.crypto.tink.JsonKeysetReader;
-import com.google.crypto.tink.JsonKeysetWriter;
-import com.google.crypto.tink.KeysetHandle;
-import com.google.crypto.tink.KeysetManager;
-import com.google.crypto.tink.Mac;
-import com.google.crypto.tink.PublicKeySign;
-import com.google.crypto.tink.PublicKeyVerify;
-import com.google.crypto.tink.aead.AeadFactory;
-import com.google.crypto.tink.aead.AeadKeyTemplates;
+import com.google.crypto.tink.*;
+import com.google.crypto.tink.aead.AesGcmKeyManager;
+import com.google.crypto.tink.aead.ChaCha20Poly1305KeyManager;
 import com.google.crypto.tink.config.TinkConfig;
-import com.google.crypto.tink.mac.MacFactory;
-import com.google.crypto.tink.mac.MacKeyTemplates;
-import com.google.crypto.tink.proto.KeyTemplate;
-import com.google.crypto.tink.signature.PublicKeySignFactory;
-import com.google.crypto.tink.signature.PublicKeyVerifyFactory;
-import com.google.crypto.tink.signature.SignatureKeyTemplates;
+import com.google.crypto.tink.mac.HmacKeyManager;
+import com.google.crypto.tink.signature.Ed25519PrivateKeyManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -25,14 +13,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 
 public class Main {
-    private final static char[] HEX_CHARS = "0123456789ABCDEF".toCharArray();
+    private final static char[] HEX_CHARS = "0123456789abcdef".toCharArray();
 
     public static void main(String[] args) throws GeneralSecurityException, IOException {
         // Initialize stuff
         TinkConfig.register();
 
         // Create a new key
-        KeysetHandle key1 = generateKey(AeadKeyTemplates.CHACHA20_POLY1305);
+        KeysetHandle key1 = generateKey(ChaCha20Poly1305KeyManager.chaCha20Poly1305Template());
         // Store it in a file
         storeKey(key1, "aead-key-1.json");
 
@@ -41,7 +29,7 @@ public class Main {
 
         // Rotate the key (both can be used for decryption, but only the primary one is used for encryption)
         // The new key can even be of another algorithm
-        KeysetHandle key3 = rotateKey(key2, AeadKeyTemplates.AES128_GCM);
+        KeysetHandle key3 = rotateKey(key2, AesGcmKeyManager.aes128GcmTemplate());
         // And also store it
         storeKey(key3, "rotated-aead-key-3.json");
 
@@ -49,7 +37,7 @@ public class Main {
         byte[] plaintext = "hello, tink".getBytes(StandardCharsets.UTF_8);
 
         // Create a HMAC key
-        KeysetHandle hmacKey = generateKey(MacKeyTemplates.HMAC_SHA256_128BITTAG);
+        KeysetHandle hmacKey = generateKey(HmacKeyManager.hmacSha256Template());
         // And store if
         storeKey(hmacKey, "hmac-key.json");
         // Calculate the MAC
@@ -58,7 +46,7 @@ public class Main {
         System.out.println("Mac: " + bytesToHex(mac));
 
         // Generate a Public-Private keypair
-        KeysetHandle signatureKey = generateKey(SignatureKeyTemplates.ED25519);
+        KeysetHandle signatureKey = generateKey(Ed25519PrivateKeyManager.ed25519Template());
         // Store it
         storeKey(signatureKey, "signature-key.json");
         // Create a signature
@@ -85,35 +73,36 @@ public class Main {
     }
 
     private static KeysetHandle rotateKey(KeysetHandle oldKey, KeyTemplate newKeyType) throws GeneralSecurityException {
-        return KeysetManager.withKeysetHandle(oldKey).rotate(newKeyType).getKeysetHandle();
+        KeysetManager keysetManager = KeysetManager.withKeysetHandle(oldKey);
+        return keysetManager.add(newKeyType).getKeysetHandle();
     }
 
     private static void verify(byte[] signature, byte[] plaintext, KeysetHandle publicSignatureKey) throws GeneralSecurityException {
-        PublicKeyVerify publicKeyVerify = PublicKeyVerifyFactory.getPrimitive(publicSignatureKey);
+        PublicKeyVerify publicKeyVerify = publicSignatureKey.getPrimitive(PublicKeyVerify.class);
         publicKeyVerify.verify(signature, plaintext);
         System.out.println("Signature verified");
     }
 
     private static byte[] sign(byte[] plaintext, KeysetHandle signatureKey) throws GeneralSecurityException {
-        PublicKeySign publicKeySign = PublicKeySignFactory.getPrimitive(signatureKey);
+        PublicKeySign publicKeySign = signatureKey.getPrimitive(PublicKeySign.class);
         byte[] signature = publicKeySign.sign(plaintext);
         System.out.println("Signature: " + bytesToHex(signature));
         return signature;
     }
 
     private static byte[] calculateMac(byte[] plaintext, KeysetHandle macKey) throws GeneralSecurityException {
-        Mac hmac = MacFactory.getPrimitive(macKey);
+        Mac hmac = macKey.getPrimitive(Mac.class);
         return hmac.computeMac(plaintext);
     }
 
     private static byte[] decryptAead(KeysetHandle key, byte[] ciphertext) throws GeneralSecurityException {
-        Aead aead2 = AeadFactory.getPrimitive(key);
-        return aead2.decrypt(ciphertext, new byte[0]);
+        Aead aead = key.getPrimitive(Aead.class);
+        return aead.decrypt(ciphertext, new byte[0]);
     }
 
     private static byte[] encryptAead(KeysetHandle key, byte[] plaintext) throws GeneralSecurityException {
-        Aead aead1 = AeadFactory.getPrimitive(key);
-        return aead1.encrypt(plaintext, new byte[0]);
+        Aead aead = key.getPrimitive(Aead.class);
+        return aead.encrypt(plaintext, new byte[0]);
     }
 
     private static String bytesToHex(byte[] bytes) {
